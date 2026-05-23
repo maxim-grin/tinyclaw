@@ -1,0 +1,34 @@
+[project]
+name = "tinyclaw"
+version = "0.0.1"
+description = "A local Telegram AI assistant with pluggable model providers and skill-based tools."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.0",
+    "openai>=1.0.0",
+    "playwright>=1.55.0",
+    "python-dotenv>=1.0.0",
+    "python-telegram-bot>=22.0",
+    "sqlalchemy>=2.0.49",
+]
+
+[project.scripts]
+tinyclaw = "main:cli"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "agent_runtime",
+    "context_builder",
+    "logging_utils",
+    "main",
+    "memory_store",
+    "model_providers",
+    "session_manager",
+    "skill_loader",
+    "telegram_channel",
+]

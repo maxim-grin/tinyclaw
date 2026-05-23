@@ -1,0 +1,111 @@
+import os
+import importlib.util
+import logging
+
+from logging_utils import compact_json
+
+logger = logging.getLogger(__name__)
+
+class SkillLoader:
+    def __init__(self):
+        self.skills = {}
+
+    # Scan the 'Skills' folder and load each Skill
+    def load_from_directory(self, skills_dir):
+        if not os.path.isdir(skills_dir):
+            logger.warning("No skill directory found: %s", skills_dir)
+            return
+
+        for entry in os.listdir(skills_dir):
+            skill_dir = os.path.join(skills_dir, entry)
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            handler_py = os.path.join(skill_dir, "handler.py")
+
+            # Skip if folder doesn't have both required files
+            if not os.path.isdir(skill_dir):
+                continue
+            if not os.path.exists(skill_md) or not os.path.exists(handler_py):
+                continue
+
+            try:
+                # Read name and description from SKILL.md
+                with open(skill_md) as f:
+                    name, description = self._parse_skill_md(f.read())
+
+                # Import handler.py at runtime
+                # Tell Python where the file is
+                spec = importlib.util.spec_from_file_location(f"skill_{entry}", handler_py)
+                
+                # Create an empty module from that spec
+                module = importlib.util.module_from_spec(spec)
+                
+                # Run the file and fill the module with its contents
+                spec.loader.exec_module(module)
+
+                # Get the tools list and execute function from the loaded module
+                self.skills[name] = {
+                    "name": name,
+                    "description": description,
+                    "tools": getattr(module, "tools", []),
+                    "execute": getattr(module, "execute", None),
+                }
+
+                tool_names = [tool.name for tool in self.skills[name].tools]
+
+                logger.info(
+                    "Loaded skill '%s' with tools: %s",
+                    name,
+                    ", ".join(tool_names) or "none",
+                )
+
+            except Exception as e:
+                logger.exception("Error while loading skill '%s': %s", entry, e)
+
+    # Helper function to get Skill names and descriptions for the system prompt
+    def get_active_skills(self):
+        return [
+            {"name": s["name"], "description": s["description"]}
+            for s in self.skills.values()
+        ]
+
+    # All tool definitions from all skills, sent to the LLM
+    def get_tools(self):
+        tools = []
+
+        for skill in self.skills.values():
+            tools.extend(skill["tools"])
+
+        return tools
+
+    # Find which skill owns this tool and run it
+    async def execute_tool(self, tool_name, tool_input, context):
+        logger.info("Executing tool '%s' with input: %s", tool_name, compact_json(tool_input))
+        for skill in self.skills.values():
+            if any(t["name"]==tool_name for t in skill["tools"]):
+                if skill["execute"]:
+                    result = await skill["execute"](tool_name,tool_input,context)
+                    logger.info(
+                        "Tool '%s' completed with result: %s",
+                        tool_name,
+                        compact_json(result),
+                    )
+                    return result
+                logger.warning("Tool '%s' belongs to skill '%s' but has no execute handler", tool_name, skill["name"])
+                return {"error":f"Tool {tool_name} has no execute handler"}
+
+        logger.warning("Unknown tool requested by model: %s", tool_name)
+        return {"error":f"Unknown tool {tool_name}"}
+
+    # Extract name and description from SKILL.md frontmatter
+    def _parse_skill_md(self, content):
+        # Defaults
+        name = "unknown"       
+        description = ""
+
+        for line in content.split("\n"):
+            if line.startswith("name:"):
+                name = line.split(":", 1)[1].strip()
+            elif line.startswith("description:"):
+                description = line.split(":", 1)[1].strip()
+
+        return name, description
